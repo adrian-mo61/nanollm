@@ -1,3 +1,4 @@
+import shutil
 import argparse, contextlib, csv, hashlib, json, math, platform, time
 from pathlib import Path
 import numpy as np
@@ -57,11 +58,16 @@ def main():
         start=ck['step']; best=ck['best']; history=ck['history']; rng.bit_generator.state=ck['numpy_rng']; torch.set_rng_state(ck['torch_rng'].cpu())
         if device=='cuda' and ck['cuda_rng']: torch.cuda.set_rng_state_all([s.cpu() for s in ck['cuda_rng']])
     (out/'config.json').write_text(json.dumps(dict(arguments=vars(a),model=cfg,parameters=n,device=device,torch=torch.__version__,python=platform.python_version(),data=meta),indent=2),encoding='utf-8')
+    if (data/'tokenizer.json').resolve() != (out/'tokenizer.json').resolve():
+        shutil.copyfile(data/'tokenizer.json',out/'tokenizer.json')
     def batch(key,g):
         if is_sft:
             idx=g.integers(0,meta['records'][key],size=a.batch_size)
-            z=torch.from_numpy(arrays[key].reshape(-1,a.seq_len+1)[idx].astype(np.int64)).to(device)
-            y=z[:,1:].clone(); weights=torch.from_numpy(masks[key][idx,1:].copy()).to(device)
+            raw=arrays[key].reshape(-1,a.seq_len+1)[idx]
+            mask=masks[key][idx]
+            end=int(np.nonzero(mask)[1].max())+1 if meta.get('trim_padding') else a.seq_len+1
+            z=torch.from_numpy(raw[:,:end].astype(np.int64)).to(device)
+            y=z[:,1:].clone(); weights=torch.from_numpy(mask[:,1:end].copy()).to(device)
             y[weights==0]=-100
             return z[:,:-1],y
         v=arrays[key]; starts=g.integers(0,len(v)-a.seq_len,size=a.batch_size)
@@ -87,9 +93,11 @@ def main():
         tick=time.perf_counter(); model.train(); opt.zero_grad(set_to_none=True)
         lr=a.lr*min(1.,step/max(1,a.warmup))*(.1+.9*.5*(1+math.cos(math.pi*max(0,step-a.warmup)/max(1,a.steps-a.warmup))))
         for group in opt.param_groups: group['lr']=lr
-        loss_sum=0.
+        loss_sum=0.; actual_positions=0; supervised_positions=0
         for _ in range(a.accum):
-            with amp(): loss=model(*batch('train',rng))
+            bx,by=batch('train',rng)
+            actual_positions+=bx.numel(); supervised_positions+=(by!=-100).sum().item()
+            with amp(): loss=model(bx,by)
             loss_sum+=loss.detach().float().item(); scaler.scale(loss/a.accum).backward()
         scaler.unscale_(opt); norm=torch.nn.utils.clip_grad_norm_(model.parameters(),1.).item()
         if not math.isfinite(loss_sum) or not math.isfinite(norm): raise FloatingPointError('非有限 loss/梯度，训练已停止')
@@ -103,13 +111,15 @@ def main():
                     vx,vy=batch('val',vrng); weight=(vy!=-100).sum().item(); losses.append((model(vx,vy).item(),weight))
             val=sum(l*w for l,w in losses)/sum(w for _,w in losses)
         history.append(dict(step=step,tokens_seen=step*tokens,train_loss=loss_sum/a.accum,val_loss=val,val_ppl=math.exp(min(val,80)) if val is not None else None,lr=lr,grad_norm=norm,tokens_per_sec=tokens/elapsed,step_seconds=elapsed,peak_memory_gb=torch.cuda.max_memory_allocated()/1e9 if device=='cuda' else 0))
-        bar.set_postfix(loss=f'{loss_sum/a.accum:.4f}',val=val, tok_s=int(tokens/elapsed))
+        if meta.get('trim_padding'):
+            previous=history[-2] if len(history)>1 else {}
+            history[-1].update(tokens_seen=previous.get('tokens_seen',0)+actual_positions,tokens_per_sec=actual_positions/elapsed,supervised_tokens_seen=previous.get('supervised_tokens_seen',0)+supervised_positions)
+        bar.set_postfix(loss=f'{loss_sum/a.accum:.4f}',val=val, tok_s=int(history[-1]['tokens_per_sec']))
         if val is not None:
             report()
             if val<best: best=val; save('best.pt',step)
         if step%a.save_every==0 or step==a.steps: save('last.pt',step); report()
         if a.stop_after and step>=a.stop_after:
             save('last.pt',step); report(); break
-    (out/'summary.json').write_text(json.dumps(dict(parameters=n,best_val_loss=best,best_val_ppl=math.exp(min(best,80)),steps=history[-1]['step'] if history else start,tokens_seen=(history[-1]['step'] if history else start)*tokens),indent=2),encoding='utf-8')
+    (out/'summary.json').write_text(json.dumps(dict(parameters=n,best_val_loss=best,best_val_ppl=math.exp(min(best,80)),steps=history[-1]['step'] if history else start,tokens_seen=history[-1]['tokens_seen'] if history else 0),indent=2),encoding='utf-8')
 if __name__=='__main__': main()
-

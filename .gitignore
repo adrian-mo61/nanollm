@@ -14,3 +14,7 @@ smoke_sft/
 smoke_*/
 cloud_work/
 logs/
+pretrain/
+sft/
+cloud_work_qa/
+*.qkdownloading

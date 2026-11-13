@@ -162,3 +162,41 @@ tail -f cloud-console.log
 在另一个终端运行 `top -c`、`free -h`，观察 prepare.py 的 CPU、内存及 swap；只凭静止进度不能判断卡死。若内存耗尽或大量换页，可停止当前进程后减少词表样本规模，例如 `bash run.sh all --work-dir cloud_work_small_vocab --tokenizer-lines 100000`。这只减少训练 BBPE 词表的样本，不减少后续全量语料分词；可能改变分词质量。不要替换已有模型使用的 tokenizer。
 
 正在运行的进程不会自动应用 git pull 后的改动。若资源仍在正常工作可继续等待；需要新版提示时停止旧任务后再启动。预处理不支持中途续接，非空且缺少 meta.json 的目录需要保留并换用新的 work-dir。
+
+## 使用 train.jsonl 从预训练模型重新做短问答 SFT
+
+此流程支持 `question/answer` 格式，默认过滤空内容，去除相同问题与回答的完全重复项；按问题哈希分配 95%/5% 训练/验证。相同问题不同回答仍会保留，但不会跨集合。不会自动判断事实正确性或清除近似重复。
+
+默认最多 256 个输入位置（记录包含额外一个右移标签 token），超过上限的样本完整跳过并记录，不截断、不拆开问题与回答。二进制仍为定长 uint16 ID + uint8 mask，训练每个 batch 按最后一个有效目标位置裁掉尾部 padding，仅监督回答和 EOS。不同样本之间不串接。
+
+Linux 云 GPU 一键运行：
+
+```bash
+git pull --ff-only
+# 本地文件布局：pretrain/best.pt、sft/tokenizer.json、datasets/train.jsonl
+bash run.sh qa
+
+# 若预训练结果仍在云服务器原目录中：
+bash run.sh qa --init-from cloud_work/pretrain/best.pt --tokenizer cloud_work/pretrain_data/tokenizer.json
+```
+
+新输出为 cloud_work_qa/data 和 cloud_work_qa/sft，原预训练和旧 SFT 不覆盖。启动器拒绝将 SFT 检查点作为首次初始化，核对 tokenizer 哈希后仅加载预训练权重，重新创建优化器。默认 steps=8000、batch-size=8、accum=4、lr=2e-5、warmup=100、seq-len=256，每 100 步验证和保存。8000 步随机抽取约 256000 条记录，仍是有放回采样，不是严格一个 epoch；这是第一轮对照预算，不保证充分收敛。显存使用需在你的 GPU 实测。
+
+再次运行相同命令自动恢复新目录的 last.pt（缺失时 best.pt），并恢复原训练日程及随机状态；不会重新从预训练权重开始。开始另一组实验应使用新的 --work-dir。改变 seq-len 需要重新预处理。
+
+```bash
+nohup bash run.sh qa > qa-console.log 2>&1 &
+# 训练后推理；tokenizer 自动复制到训练输出目录
+python generate.py --checkpoint cloud_work_qa/sft/best.pt --tokenizer cloud_work_qa/sft/tokenizer.json --prompt '中国的首都是哪里？只回答城市名称。' --max-new-tokens 128
+```
+
+分步运行或在 Windows 使用：
+
+```bash
+python prepare_sft.py --input datasets/train.jsonl --tokenizer sft/tokenizer.json --output qa_data --seq-len 256 --deduplicate --skip-long --trim-padding
+python sft.py --data qa_data --out runs/qa --init-from pretrain/best.pt --seq-len 256 --batch-size 8 --accum 4 --steps 8000 --save-every 100
+# 恢复，日程参数保持一致
+python sft.py --data qa_data --out runs/qa --resume runs/qa/last.pt --seq-len 256 --batch-size 8 --accum 4 --steps 8000 --save-every 100
+```
+
+新数据 meta.json 记录去重、无效和超长数量，rejected.jsonl 记录无效/超长样本行号。动态裁剪模式下 metrics.csv 的 tokens_seen/tokens_per_sec 统计实际送入模型的位置（仍包含 batch 内 padding），额外记录 supervised_tokens_seen，表示累计有效回答及 EOS 标签数。旧数据的统计口径保持不变。

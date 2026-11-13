@@ -7,6 +7,11 @@ if [[ "${1:-}" == "setup" ]]; then
   "$PYTHON" -m pip install -r requirements.txt
   exit 0
 fi
+ENTRY=launch.py
+if [[ "${1:-}" == "qa" ]]; then
+  ENTRY=launch_qa.py
+  shift
+fi
 mkdir -p logs
 # Preserve errors across tee; use distinct logs on every invocation.
-"$PYTHON" -u launch.py "$@" 2>&1 | tee "logs/launch_$(date +%Y%m%d_%H%M%S)_$$.log"
+"$PYTHON" -u "$ENTRY" "$@" 2>&1 | tee "logs/launch_$(date +%Y%m%d_%H%M%S)_$$.log"
