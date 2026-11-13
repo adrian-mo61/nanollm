@@ -154,3 +154,11 @@ tail -f cloud-console.log
 ```
 
 恢复时仍使用同一 work-dir。不要同时启动两个相同目录的任务；脚本用文件锁阻止并发写入。使用 Conda 时先激活环境；若 Python 命令不同，可设置 `PYTHON=/path/to/python bash run.sh all`。
+
+### 预处理进度停在 4% 左右
+
+旧版词表训练只读前 100 万行，但进度总量显示全文件字节数，因此可能停在约 558 MB / 12.7 GB。随后仍会进行 CPU BPE 计算；这时 GPU 空闲正常，旧 ETA 不代表词表训练剩余时间。新版按样本行数显示进度、打印阶段切换，并每 30 秒输出词表训练尚未返回的提示（不是计算完成百分比）。
+
+在另一个终端运行 `top -c`、`free -h`，观察 prepare.py 的 CPU、内存及 swap；只凭静止进度不能判断卡死。若内存耗尽或大量换页，可停止当前进程后减少词表样本规模，例如 `bash run.sh all --work-dir cloud_work_small_vocab --tokenizer-lines 100000`。这只减少训练 BBPE 词表的样本，不减少后续全量语料分词；可能改变分词质量。不要替换已有模型使用的 tokenizer。
+
+正在运行的进程不会自动应用 git pull 后的改动。若资源仍在正常工作可继续等待；需要新版提示时停止旧任务后再启动。预处理不支持中途续接，非空且缺少 meta.json 的目录需要保留并换用新的 work-dir。

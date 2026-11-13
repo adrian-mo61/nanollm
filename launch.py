@@ -49,10 +49,12 @@ def main():
     p.add_argument('--work-dir',type=Path,default=Path('cloud_work'))
     p.add_argument('--pretrain-input',type=Path,default=Path('datasets/train.txt'))
     p.add_argument('--sft-input',type=Path,default=Path('datasets/distill_r1_110k_sft.jsonl'))
+    p.add_argument('--tokenizer-lines',type=int,default=1000000)
     p.add_argument('--init-from',type=Path); p.add_argument('--tokenizer',type=Path)
     for name,value in [('pretrain-steps',10000),('sft-steps',2000),('batch-size',2),('accum',16),('seq-len',1024),('save-every',100),('eval-every',100)]:
         p.add_argument('--'+name,type=int,default=value)
     a=p.parse_args()
+    if a.tokenizer_lines<0: p.error('tokenizer-lines must be >= 0')
     if sys.version_info<(3,11): p.error('Python >= 3.11 required')
     for key in ['pretrain_steps','sft_steps','batch_size','accum','seq_len','save_every','eval_every']:
         if getattr(a,key)<=0: p.error(f'{key} must be positive')
@@ -68,7 +70,7 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         pre=work/'pretrain_data'; sft=work/'sft_data'; preout=work/'pretrain'; sftout=work/'sft'
         if a.stage in ['all','pretrain']:
-            prepare(['prepare.py','--input',a.pretrain_input.resolve(),'--output',pre],pre)
+            prepare(['prepare.py','--input',a.pretrain_input.resolve(),'--output',pre,'--tokenizer-lines',a.tokenizer_lines],pre)
             train('pretrain',pre,preout,a)
         if a.stage in ['all','sft']:
             tokenizer=a.tokenizer.resolve() if a.tokenizer else pre/'tokenizer.json'
