@@ -117,3 +117,40 @@ python generate.py --checkpoint runs/sft/best.pt --tokenizer sft_data/tokenizer.
 正式训练尚未在全量数据上运行；先使用小样本验证配置和显存。所有数据集、bin、checkpoint、运行产物均由 .gitignore 排除，不上传 GitHub。
 
 已对本地 R1 文件进行全量字段检查：110000 条中 109999 条有效，1 条 instruction 为空；109709 条有效问题包含汉字。预处理将无效记录的行号及原因写入 rejected.jsonl，并在 meta.json 记录数量。该统计不代表内容质量或准确性评测。
+
+## Linux 云 GPU 一键启动
+
+选择 **Python 3.11+、已安装 CUDA 版 PyTorch 2.4+ 的 NVIDIA GPU 镜像**。脚本使用当前环境；不自动安装显卡驱动或更换 CUDA。若镜像不包含可用 PyTorch，先按 [官方安装选择器](https://pytorch.org/get-started/locally/) 安装匹配版本。
+
+```bash
+git clone https://github.com/adrian-mo61/nanollm.git
+cd nanollm
+# 将 train.txt 和 distill_r1_110k_sft.jsonl 上传到 datasets/
+bash run.sh setup                  # 检查 Python/CUDA，安装项目依赖
+bash run.sh all                    # 分词 → 预训练 → SFT 分词 → SFT
+```
+
+只跑某个阶段：`bash run.sh pretrain` 或 `bash run.sh sft`。默认输出在 cloud_work/，终端日志在 logs/。重复运行同一命令自动复用完成的预处理，并恢复 last.pt（不存在时回退 best.pt）。续训从 checkpoint 读取原始 batch、上下文和学习率日程，新传入的这些参数不覆盖原设置；已完成阶段加载检查后直接结束。没有检查点时无法恢复未保存的步骤。预处理中断不会自动续接，脚本会提示使用新工作目录或移走不完整的数据目录，避免误用半成品。
+
+云服务器建议将数据和工作目录放在持久化磁盘：
+
+```bash
+bash run.sh all --work-dir /mnt/data/nanollm-run --pretrain-input /mnt/data/train.txt --sft-input /mnt/data/distill_r1_110k_sft.jsonl --batch-size 2 --seq-len 1024 --accum 16 --pretrain-steps 61036
+```
+
+默认预训练 10000 步，SFT 2000 步；默认每 100 步保存检查点。首次运行前确定总步数。显存不足时可在新工作目录降低 batch-size/seq-len；原检查点严格保留原训练配置。脚本为单卡训练，多卡机器可用 `CUDA_VISIBLE_DEVICES=0 bash run.sh all` 选择一张卡，不支持 torchrun/DDP。
+
+已有其他路径的预训练模型和 tokenizer 时：
+
+```bash
+bash run.sh sft --init-from runs/base/best.pt --tokenizer data/tokenizer.json
+```
+
+SSH 断开后继续运行（日志路径为示例）：
+
+```bash
+nohup bash run.sh all > cloud-console.log 2>&1 &
+tail -f cloud-console.log
+```
+
+恢复时仍使用同一 work-dir。不要同时启动两个相同目录的任务；脚本用文件锁阻止并发写入。使用 Conda 时先激活环境；若 Python 命令不同，可设置 `PYTHON=/path/to/python bash run.sh all`。

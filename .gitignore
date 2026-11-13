@@ -12,3 +12,5 @@ smoke_sft/
 .env
 .venv/
 smoke_*/
+cloud_work/
+logs/
