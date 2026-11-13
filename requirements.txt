@@ -1,0 +1,5 @@
+torch>=2.4
+numpy>=1.26
+tokenizers>=0.20
+matplotlib>=3.8
+tqdm>=4.66

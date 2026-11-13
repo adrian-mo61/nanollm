@@ -1,0 +1,14 @@
+__pycache__/
+data/
+smoke_data/
+runs/
+datasets/
+sft_data/
+smoke_sft/
+*.bin
+*.pt
+*.tmp
+*.jsonl
+.env
+.venv/
+smoke_*/
