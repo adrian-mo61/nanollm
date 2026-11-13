@@ -40,13 +40,16 @@ def train(stage, data, out, args, init=None):
         if stage=='sft':
             if not init or not init.is_file(): raise FileNotFoundError(f'Pretrained checkpoint missing: {init}')
             command.extend(['--init-from',init])
+    if getattr(args,'model_size',None): command.extend(['--model-size',args.model_size])
     command.extend(['--save-every',args.save_every,'--eval-every',args.eval_every])
     run(command)
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('stage',choices=['all','pretrain','sft'],nargs='?',default='all')
-    p.add_argument('--work-dir',type=Path,default=Path('cloud_work'))
+    p.add_argument('--model-size',choices=['20m','100m'],default=None)
+    p.add_argument('--pretrain-data',type=Path,help='Reuse existing complete binary data and tokenizer')
+    p.add_argument('--work-dir',type=Path,default=None)
     p.add_argument('--pretrain-input',type=Path,default=Path('datasets/train.txt'))
     p.add_argument('--sft-input',type=Path,default=Path('datasets/distill_r1_110k_sft.jsonl'))
     p.add_argument('--tokenizer-lines',type=int,default=1000000)
@@ -54,6 +57,7 @@ def main():
     for name,value in [('pretrain-steps',10000),('sft-steps',2000),('batch-size',2),('accum',16),('seq-len',1024),('save-every',100),('eval-every',100)]:
         p.add_argument('--'+name,type=int,default=value)
     a=p.parse_args()
+    if a.work_dir is None: a.work_dir=Path('cloud_work_20m' if a.model_size=='20m' else 'cloud_work')
     if a.tokenizer_lines<0: p.error('tokenizer-lines must be >= 0')
     if sys.version_info<(3,11): p.error('Python >= 3.11 required')
     for key in ['pretrain_steps','sft_steps','batch_size','accum','seq_len','save_every','eval_every']:
@@ -68,8 +72,9 @@ def main():
     import fcntl
     with (work/'.lock').open('w') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        pre=work/'pretrain_data'; sft=work/'sft_data'; preout=work/'pretrain'; sftout=work/'sft'
+        pre=a.pretrain_data.resolve() if a.pretrain_data else work/'pretrain_data'; sft=work/'sft_data'; preout=work/'pretrain'; sftout=work/'sft'
         if a.stage in ['all','pretrain']:
+            if a.pretrain_data and not (pre/'meta.json').is_file(): raise FileNotFoundError('pretrain-data needs completed meta.json')
             prepare(['prepare.py','--input',a.pretrain_input.resolve(),'--output',pre,'--tokenizer-lines',a.tokenizer_lines],pre)
             train('pretrain',pre,preout,a)
         if a.stage in ['all','sft']:

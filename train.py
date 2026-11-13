@@ -7,12 +7,13 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from tqdm import trange
-from model import LM
+from model import LM, model_config
 
 def main():
     p=argparse.ArgumentParser()
     for name,default in [('data','data'),('out','runs/base'),('resume','')]: p.add_argument('--'+name,default=default)
     for name,default in [('steps',10000),('batch-size',2),('seq-len',1024),('accum',16),('eval-every',100),('eval-batches',20),('save-every',500),('warmup',500),('seed',42)]: p.add_argument('--'+name,type=int,default=default)
+    p.add_argument('--model-size',choices=['20m','100m'],default=None)
     p.add_argument('--init-from',default=''); p.add_argument('--stop-after',type=int,default=0)
     p.add_argument('--lr',type=float,default=3e-4); p.add_argument('--tiny',action='store_true')
     a=p.parse_args()
@@ -34,7 +35,7 @@ def main():
     device='cuda' if torch.cuda.is_available() else 'cpu'
     dtype=torch.bfloat16 if device=='cuda' and torch.cuda.is_bf16_supported() else torch.float16
     def amp(): return torch.autocast('cuda',dtype=dtype) if device=='cuda' else contextlib.nullcontext()
-    cfg=dict(vocab=meta['vocab_size'],d=64,layers=2,heads=4,hidden=128) if a.tiny else dict(vocab=meta['vocab_size'],d=768,layers=12,heads=12,hidden=1792)
+    cfg=dict(vocab=meta['vocab_size'],d=64,layers=2,heads=4,hidden=128) if a.tiny else model_config(a.model_size or '100m',meta['vocab_size'])
     initial=None
     if is_sft:
         assert a.resume or a.init_from, 'SFT 必须提供 --init-from 预训练模型或 --resume SFT检查点'
@@ -45,6 +46,8 @@ def main():
         cfg=initial['config']
     if a.resume:
         cfg=torch.load(a.resume,map_location='cpu',weights_only=False)['config']
+    if a.model_size:
+        assert not a.tiny and cfg==model_config(a.model_size,meta['vocab_size']), '模型大小与 checkpoint 不一致，不能将 100M 权重作为 20M 使用'
     model=LM(**cfg).to(device); n=sum(x.numel() for x in model.parameters())
     if initial is not None: model.load_state_dict(initial['model'])
     opt=torch.optim.AdamW([{'params':[p for p in model.parameters() if p.ndim>=2],'weight_decay':.1},{'params':[p for p in model.parameters() if p.ndim<2],'weight_decay':0.}],lr=a.lr,betas=(.9,.95))

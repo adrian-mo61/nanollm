@@ -18,3 +18,5 @@ pretrain/
 sft/
 cloud_work_qa/
 *.qkdownloading
+cloud_work_20m/
+cloud_work_20m_qa/

@@ -200,3 +200,35 @@ python sft.py --data qa_data --out runs/qa --resume runs/qa/last.pt --seq-len 25
 ```
 
 新数据 meta.json 记录去重、无效和超长数量，rejected.jsonl 记录无效/超长样本行号。动态裁剪模式下 metrics.csv 的 tokens_seen/tokens_per_sec 统计实际送入模型的位置（仍包含 batch 内 padding），额外记录 supervised_tokens_seen，表示累计有效回答及 EOS 标签数。旧数据的统计口径保持不变。
+
+## 20M 小模型探索
+
+新增 `--model-size 20m`：7 层、d=320、5 个注意力头（head_dim=64）、SwiGLU hidden=1024、共享 embedding/output。32K 词表下总参数 **19,993,280**，其中词嵌入10,240,000。结构仍为 Dense、RoPE、RMSNorm、因果 SDPA。默认不传 model-size 时仍是原100M；SFT/续训自动读取 checkpoint 结构，显式指定不匹配的 model-size 会报错。
+
+复用已有32K BBPE和bin可以保持与100M实验的分词条件一致，无需重新预处理；但约一半参数用于词表，这是当前对照设计的权衡。20M须从随机权重预训练，不能加载100M权重。模型更小是为了降低探索成本，不意味着效果会更好。
+
+Linux 云 GPU 第一轮：固定32768 token/step，预训练约4亿token（12208步），作为实验预算而非效果保证。请确保现有 pretrain_data 目录含 train.bin、val.bin、meta.json、tokenizer.json。
+
+```bash
+git pull --ff-only
+bash run.sh pretrain --model-size 20m --pretrain-data cloud_work/pretrain_data --work-dir cloud_work_20m --pretrain-steps 12208 --batch-size 8 --seq-len 512 --accum 8
+```
+
+若你的二进制目录实际是 pretrain_data/，替换命令中的 cloud_work/pretrain_data。若尚无bin，去掉 --pretrain-data，会在新的工作目录中训练词表并处理原始语料。
+
+预训练完成后，在同一20M模型上做短问答SFT：
+
+```bash
+bash run.sh qa --init-from cloud_work_20m/pretrain/best.pt --tokenizer cloud_work_20m/pretrain/tokenizer.json --work-dir cloud_work_20m_qa
+python generate.py --checkpoint cloud_work_20m_qa/sft/best.pt --tokenizer cloud_work_20m_qa/sft/tokenizer.json --prompt '中国的首都是哪里？只回答城市名称。' --max-new-tokens 128
+```
+
+相同命令再次运行会恢复对应目录的检查点。保持各实验工作目录独立；不要用旧100M的训练目录运行20M。当前严格resume仍不支持改变steps或batch；预先确定预算，或者在新目录进行独立实验。
+
+直接训练接口（不走Linux启动器）：
+
+```bash
+python train.py --model-size 20m --data pretrain_data --out runs/20m --steps 12208 --batch-size 8 --seq-len 512 --accum 8 --save-every 100
+```
+
+建议先完成一组20M基线，再分别改变预训练预算或SFT数据，每次只改一个因素。记录参数量、token预算、数据版本、采样策略、验证loss及固定问答的正确性/格式/EOS/重复表现。这里512上下文与此前100M的1024不同，初轮结果不是严格的参数量消融；做严格大小对比时，应统一上下文、词表、token预算和SFT设置。已有测试表明短回答SFT改善输出结束行为，不能据此推断20M能获得更强推理能力。

@@ -2,6 +2,14 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+MODEL_PRESETS = {
+    '20m': dict(d=320, layers=7, heads=5, hidden=1024),
+    '100m': dict(d=768, layers=12, heads=12, hidden=1792),
+}
+
+def model_config(size, vocab):
+    return dict(vocab=vocab, **MODEL_PRESETS[size])
+
 class Block(nn.Module):
     def __init__(self,d,h,hidden):
         super().__init__(); self.h=h; self.n1=nn.RMSNorm(d); self.n2=nn.RMSNorm(d)
