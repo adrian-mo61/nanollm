@@ -35,7 +35,7 @@ def main():
     device='cuda' if torch.cuda.is_available() else 'cpu'
     dtype=torch.bfloat16 if device=='cuda' and torch.cuda.is_bf16_supported() else torch.float16
     def amp(): return torch.autocast('cuda',dtype=dtype) if device=='cuda' else contextlib.nullcontext()
-    cfg=dict(vocab=meta['vocab_size'],d=64,layers=2,heads=4,hidden=128) if a.tiny else model_config(a.model_size or '100m',meta['vocab_size'])
+    cfg=dict(vocab=meta['vocab_size'],d=64,layers=2,heads=4,hidden=128) if a.tiny else model_config(a.model_size or '20m',meta['vocab_size'])
     initial=None
     if is_sft:
         assert a.resume or a.init_from, 'SFT 必须提供 --init-from 预训练模型或 --resume SFT检查点'

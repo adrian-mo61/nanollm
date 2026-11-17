@@ -15,7 +15,7 @@ GPU 训练请安装与驱动适配的 CUDA 版 PyTorch。默认自动选择 CUDA
 
 ## 模型与训练
 
-约 102.45M 参数（词表实际大小可能略小，最终以 config.json 为准）：12 层、隐藏维度 768、12 个注意力头、SwiGLU 中间维度 1792、共享输入/输出 embedding、RMSNorm、RoPE、因果 SDPA 注意力。Dense 架构，无 MoE。上下文默认 1024。使用 AdamW、warmup + cosine 学习率、梯度累积、梯度裁剪、CUDA BF16/FP16 自动混合精度。词表损失分块并 checkpoint，以减少 logits 显存占用。
+约 20M 参数（32K 词表下 19,993,280；词表实际大小可能略小，最终以 config.json 为准）：7 层、隐藏维度 320、5 个注意力头、SwiGLU 中间维度 1024、共享输入/输出 embedding、RMSNorm、RoPE、因果 SDPA 注意力。Dense 架构，无 MoE。上下文默认 1024。使用 AdamW、warmup + cosine 学习率、梯度累积、梯度裁剪、CUDA BF16/FP16 自动混合精度。词表损失分块并 checkpoint，以减少 logits 显存占用。
 
 默认 10000 步，每步 32768 tokens，总计 327,680,000 tokens。这是可调整的运行预算，不代表充分预训练；100M 模型可将约 2B tokens 作为初步实验预算，再依据验证集 loss 决定是否延长。例如：
 
@@ -60,7 +60,7 @@ python prepare.py --output smoke_data --limit-lines 300 --tokenizer-lines 300 --
 python train.py --data smoke_data --out runs/smoke --tiny --steps 2 --batch-size 1 --seq-len 32 --accum 1 --eval-every 1 --eval-batches 2 --warmup 1
 ```
 
-`--tiny` 仅用于验证管道，不是 100M 正式模型。正式训练不传此参数。
+`--tiny` 仅用于验证管道，不是 20M 正式模型。正式训练不传此参数。
 
 参考：[BBPE trainer](https://huggingface.co/docs/tokenizers/main/en/api/trainers)、[PyTorch SDPA](https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html)。
 
@@ -203,7 +203,7 @@ python sft.py --data qa_data --out runs/qa --resume runs/qa/last.pt --seq-len 25
 
 ## 20M 小模型探索
 
-新增 `--model-size 20m`：7 层、d=320、5 个注意力头（head_dim=64）、SwiGLU hidden=1024、共享 embedding/output。32K 词表下总参数 **19,993,280**，其中词嵌入10,240,000。结构仍为 Dense、RoPE、RMSNorm、因果 SDPA。默认不传 model-size 时仍是原100M；SFT/续训自动读取 checkpoint 结构，显式指定不匹配的 model-size 会报错。
+新增 `--model-size 20m`：7 层、d=320、5 个注意力头（head_dim=64）、SwiGLU hidden=1024、共享 embedding/output。32K 词表下总参数 **19,993,280**，其中词嵌入10,240,000。结构仍为 Dense、RoPE、RMSNorm、因果 SDPA。不传 model-size 时默认即为 20M，传 `--model-size 100m` 使用原 100M；SFT/续训自动读取 checkpoint 结构，显式指定不匹配的 model-size 会报错。
 
 复用已有32K BBPE和bin可以保持与100M实验的分词条件一致，无需重新预处理；但约一半参数用于词表，这是当前对照设计的权衡。20M须从随机权重预训练，不能加载100M权重。模型更小是为了降低探索成本，不意味着效果会更好。
 

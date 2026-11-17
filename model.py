@@ -27,7 +27,7 @@ class Block(nn.Module):
         z=self.n2(x); return x+self.down(F.silu(self.gate(z))*self.up(z))
 
 class LM(nn.Module):
-    def __init__(self,vocab=32000,d=768,layers=12,heads=12,hidden=1792):
+    def __init__(self,vocab=32000,d=320,layers=7,heads=5,hidden=1024):
         super().__init__(); self.emb=nn.Embedding(vocab,d); self.blocks=nn.ModuleList([Block(d,heads,hidden) for _ in range(layers)]); self.norm=nn.RMSNorm(d)
         self.apply(self.init)
     def init(self,m):
